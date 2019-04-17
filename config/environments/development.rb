@@ -31,6 +31,8 @@ Discourse::Application.configure do
 
   config.handlebars.precompile = false
 
+  config.action_mailer.perform_deliveries = false
+
   # we recommend you use mailcatcher https://github.com/sj26/mailcatcher
   config.action_mailer.smtp_settings = { address: "localhost", port: 1025 }
 

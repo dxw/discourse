@@ -32,6 +32,8 @@ gem 'mini_suffix'
 
 gem 'hiredis'
 
+gem 'tiny_tds' #, '1.0.2'
+
 # holding off redis upgrade temporarily as it is having issues with our current
 # freedom patch, we will follow this up.
 #

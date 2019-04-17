@@ -453,16 +453,17 @@ class ImportScripts::Base
       color: opts[:color] || category_color(opts[:parent_category_id]),
       text_color: opts[:text_color] || "FFF",
       read_restricted: opts[:read_restricted] || false,
+      skip_category_definition: true
     )
 
     new_category.custom_fields["import_id"] = import_id if import_id
     new_category.save!
 
-    if opts[:description].present?
-      changes = { raw: opts[:description] }
-      opts = { skip_revision: true, skip_validations: true, bypass_bump: true }
-      new_category.topic.first_post.revise(Discourse.system_user, changes, opts)
-    end
+    # if opts[:description].present?
+    #   changes = { raw: opts[:description] }
+    #   opts = { skip_revision: true, skip_validations: true, bypass_bump: true }
+    #   new_category.topic.first_post.revise(Discourse.system_user, changes, opts)
+    # end
 
     add_category(import_id, new_category)
 
