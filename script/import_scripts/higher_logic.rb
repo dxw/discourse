@@ -4,27 +4,28 @@ class ImportScripts::HigherLogic < ImportScripts::Base
 
   HL_ONS_HOST            ||= ENV['HL_ONS_HOST'] || "localhost"
   HL_ONS_DB              ||= ENV['HL_ONS_DB']
-  BATCH_SIZE             ||= 1000
-  HL_ONS_PW              ||= ENV['HL_ONS_PW']
   HL_ONS_USER            ||= ENV['HL_ONS_USER']
+  HL_ONS_PW              ||= ENV['HL_ONS_PW']
   HL_ONS_PREFIX          ||= ENV['HL_ONS_PREFIX'] || "dbo."
-  HL_ONS_ATTACHMENTS_DIR ||= ENV['HL_ONS_ATTACHMENTS_DIR'] || "/path/to/attachments"
+
+  BATCH_SIZE             ||= 1000
+  # HL_ONS_ATTACHMENTS_DIR ||= ENV['HL_ONS_ATTACHMENTS_DIR'] || "/path/to/attachments"
 
   def initialize
     super
 
-    # @he = HTMLEntities.new
+    @he = HTMLEntities.new
 
     @client = TinyTds::Client.new(
-      username: HL_ONS_USER,
-      password: HL_ONS_PW,
       host: HL_ONS_HOST,
       database: HL_ONS_DB,
+      username: HL_ONS_USER,
+      password: HL_ONS_PW,
     )
   end
 
   def execute
-    # import_users
+    import_users
     import_categories
     # import_topics_and_posts
     # import_private_messages
@@ -33,12 +34,11 @@ class ImportScripts::HigherLogic < ImportScripts::Base
   end
 
   def import_users
-    puts "", "importing users..."
+    puts "", "Importing users..."
 
-    last_user_id = -1
     total_users = @client.execute(<<-SQL
       SELECT COUNT(DISTINCT(ContactKey)) AS cnt
-      FROM #{HL_ONS_PREFIX}Contact u
+      FROM #{HL_ONS_PREFIX}Contact
       WHERE EmailAddress IS NOT NULL
       AND UserStatus != 'Disabled'
     SQL
@@ -46,7 +46,7 @@ class ImportScripts::HigherLogic < ImportScripts::Base
 
     batches(BATCH_SIZE) do |offset|
       users = @client.execute(<<-SQL
-        SELECT u.ContactKey, u.EmailAddress, u.FirstName, u.LastName, u.CreatedOn, lastLoginDate
+        SELECT u.ContactKey, u.EmailAddress, u.FirstName, u.LastName, u.CreatedOn, HLAdminFlag, lastLoginDate
           FROM #{HL_ONS_PREFIX}Contact u
           JOIN (SELECT ContactKey, max(LoginDate) as lastLoginDate FROM ContactLoginDate group by ContactKey) as l
           ON u.ContactKey = l.ContactKey
@@ -58,22 +58,6 @@ class ImportScripts::HigherLogic < ImportScripts::Base
       ).to_a
 
       break if users.empty?
-
-      # last_user_id = users[-1]["id"]
-      # user_ids = users.map { |u| u["id"].to_i }
-
-      # next if all_records_exist?(:users, user_ids)
-
-      # user_ids_sql = user_ids.join(",")
-
-      # users_last_activity = {}
-      # bbpress_query(<<-SQL
-      #   SELECT user_id, meta_value last_activity
-      #     FROM #{HL_ONS_PREFIX}usermeta
-      #    WHERE user_id IN (#{user_ids_sql})
-      #      AND meta_key = 'last_activity'
-      # SQL
-      # ).each { |um| users_last_activity[um["user_id"]] = um["last_activity"] }
 
       create_users(users, total: total_users, offset: offset) do |u|
         {
@@ -89,99 +73,101 @@ class ImportScripts::HigherLogic < ImportScripts::Base
   end
 
   def import_categories
-    puts "", "importing categories..."
+    puts "", "Importing categories..."
 
     categories = @client.execute(<<-SQL
-      SELECT CommunityKey, CommunityName, Description, CreatedByContactKey
-        FROM #{HL_ONS_PREFIX}Community
-    ORDER BY CommunityKey
+      SELECT Discussion.DiscussionKey, DiscussionName, Description, Contact.ContactKey, Community.CreatedOn
+      FROM #{HL_ONS_PREFIX}Discussion
+      JOIN #{HL_ONS_PREFIX}Community
+      ON Discussion.DiscussionKey = Community.DiscussionKey
+      JOIN #{HL_ONS_PREFIX}Contact
+      ON Community.CreatedByContactKey = Contact.ContactKey
+      ORDER BY Discussion.DiscussionKey
     SQL
     )
 
+    # Trying to assign the category.user_id from the Community.CreatedByContactKey is a TRAP:
+    # for whatever reason (magic cessation spell?) it does not find the correspondence with the sql id of the imported user,
+    # even when the user with that ContactKey has already been imported.
+    # So we'll have to settle for the system user to be the creator of all these communities,
+    # which is pretty certain to displease the actual creators, given how displeased they are about the move already.
     create_categories(categories) do |c|
       category = {
-        id: c['CommunityKey'],
-        name: c['CommunityName'],
+        id: c['DiscussionKey'],
+        name: c['DiscussionName'],
         description: c['Description'],
-        user_id: c['CreatedByContactKey'],
-        skip_category_definition: true
+        created_at: c['CreatedOn'],
       }
       category
     end
   end
 
-  def import_topics_and_posts
-    puts "", "importing topics and posts..."
+  def import_topics
+    puts "", "importing topics"
 
-    last_post_id = -1
-    total_posts = bbpress_query(<<-SQL
+    total_topics = @client.execute(<<-SQL
       SELECT COUNT(*) count
-        FROM #{HL_ONS_PREFIX}posts
-       WHERE post_status <> 'spam'
-         AND post_type IN ('topic', 'reply')
+        FROM #{HL_ONS_PREFIX}Discussion
     SQL
     ).first["count"]
 
     batches(BATCH_SIZE) do |offset|
-      posts = bbpress_query(<<-SQL
-        SELECT id,
-               post_author,
-               post_date,
-               post_content,
-               post_title,
-               post_type,
-               post_parent
-          FROM #{HL_ONS_PREFIX}posts
-         WHERE post_status <> 'spam'
-           AND post_type IN ('topic', 'reply')
-           AND id > #{last_post_id}
-      ORDER BY id
-         LIMIT #{BATCH_SIZE}
+      posts = @client.execute(<<-SQL
+        SELECT DiscussionKey,
+               DiscussionName,
+               CreatedOn,
+               Body,
+               Subject,
+               Type,
+               ParentMessageKey
+          FROM #{HL_ONS_PREFIX}DiscussionPost
+          ORDER BY MessageKey
+          OFFSET #{offset} rows fetch next #{BATCH_SIZE} rows only
+      SQL
+      ).to_a
+
+      break if posts.empty?
+    end
+  end
+
+  def import_posts
+    puts "", "importing posts..."
+
+    total_posts = @client.execute(<<-SQL
+      SELECT COUNT(*) count
+        FROM #{HL_ONS_PREFIX}DiscussionPost
+    SQL
+    ).first["count"]
+
+    batches(BATCH_SIZE) do |offset|
+      posts = @client.execute(<<-SQL
+        SELECT MessageKey,
+               ContactKey,
+               CreatedOn,
+               Body,
+               Subject,
+               Type,
+               ParentMessageKey
+          FROM #{HL_ONS_PREFIX}DiscussionPost
+          ORDER BY MessageKey
+          OFFSET #{offset} rows fetch next #{BATCH_SIZE} rows only
       SQL
       ).to_a
 
       break if posts.empty?
 
-      last_post_id = posts[-1]["id"].to_i
-      post_ids = posts.map { |p| p["id"].to_i }
-
-      next if all_records_exist?(:posts, post_ids)
-
-      post_ids_sql = post_ids.join(",")
-
-      posts_likes = {}
-      bbpress_query(<<-SQL
-        SELECT post_id, meta_value likes
-          FROM #{HL_ONS_PREFIX}postmeta
-         WHERE post_id IN (#{post_ids_sql})
-           AND meta_key = 'Likes'
-      SQL
-      ).each { |pm| posts_likes[pm["post_id"]] = pm["likes"].to_i }
-
-      anon_names = {}
-      bbpress_query(<<-SQL
-        SELECT post_id, meta_value
-          FROM #{HL_ONS_PREFIX}postmeta
-         WHERE post_id IN (#{post_ids_sql})
-           AND meta_key = '_bbp_anonymous_name'
-      SQL
-      ).each { |pm| anon_names[pm["post_id"]] = pm["meta_value"] }
-
       create_posts(posts, total: total_posts, offset: offset) do |p|
         skip = false
 
-        user_id = user_id_from_imported_user_id(p["post_author"]) ||
-                  find_user_by_import_id(p["post_author"]).try(:id) ||
-                  user_id_from_imported_user_id(anon_names[p['id']]) ||
-                  find_user_by_import_id(anon_names[p['id']]).try(:id) ||
+        user_id = user_id_from_imported_user_id(p["ContactKey"]) ||
+                  find_user_by_import_id(p["ContactKey"]).try(:id) ||
                   -1
 
         post = {
-          id: p["id"],
+          id: p["MessageKey"],
           user_id: user_id,
-          raw: p["post_content"],
-          created_at: p["post_date"],
-          like_count: posts_likes[p["id"]],
+          raw: p["Body"],
+          created_at: p["CreatedOn"],
         }
 
         if post[:raw].present?

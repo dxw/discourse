@@ -4,8 +4,16 @@
     "CommunityName": "name",
     "Description": "description",
     "CreatedOn": "created_at",
-    "CreatedByContactKey": "user_id"
+    "CreatedByContactKey": "user_id",
+    "DiscussionKey": "topic_id"
     },
+  "Discussion": {
+    "DiscussionKey": "id",
+    "DiscussionName":
+    "ModerationType": ??
+    "DiscussionCategoryName": ??
+  },
+
   "Contact": {
     "ContactKey": "id",
     "FirstName": "name",
@@ -13,6 +21,20 @@
     "EmailAddress": "username",
     "CreatedOn": "created_at",
     "MemberSinceDate": "created_at"
+  },
+
+  "DiscussionPost": {
+    "MessageKey": "id",
+    "Subject": "title",
+    "Body": "raw",
+    "CreatedOn": "created_at",
+    "Type":
+    "ApprovedOn": ??,
+    "MessageID": "post_number", # validate assumption!
+    "ParentMessageID": "reply_to_post_number", #validate assumption!
+    "ParentMessageKey":
+    "ContactKey": "user_id",
+    "DiscussionKey": "topic_id", #validate assumption!
   }
 }
 
