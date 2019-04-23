@@ -91,6 +91,5 @@ module ImportScripts
     def post_already_imported?(import_id)
       @posts.has_key?(import_id) || @posts.has_key?(import_id.to_s)
     end
-
   end
 end

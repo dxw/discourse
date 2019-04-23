@@ -27,7 +27,7 @@ class ImportScripts::HigherLogic < ImportScripts::Base
   def execute
     import_users
     import_categories
-    # import_topics_and_posts
+    import_topics_and_posts
     # import_private_messages
     # import_attachments
     # create_permalinks
@@ -66,7 +66,8 @@ class ImportScripts::HigherLogic < ImportScripts::Base
           email: u['EmailAddress'].to_s.downcase,
           name: [u['FirstName'].to_s, u['LastName'].to_s].compact.join(' '),
           created_at: u['CreatedOn'],
-          last_seen_at: u['lastLoginDate']
+          last_seen_at: u['lastLoginDate'],
+          admin: u['HLAdminFlag']
         }
       end
     end
@@ -76,62 +77,28 @@ class ImportScripts::HigherLogic < ImportScripts::Base
     puts "", "Importing categories..."
 
     categories = @client.execute(<<-SQL
-      SELECT Discussion.DiscussionKey, DiscussionName, Description, Contact.ContactKey, Community.CreatedOn
+      SELECT Discussion.DiscussionKey, DiscussionName, Description, Community.CreatedOn, Community.CreatedByContactKey
       FROM #{HL_ONS_PREFIX}Discussion
       JOIN #{HL_ONS_PREFIX}Community
       ON Discussion.DiscussionKey = Community.DiscussionKey
-      JOIN #{HL_ONS_PREFIX}Contact
-      ON Community.CreatedByContactKey = Contact.ContactKey
       ORDER BY Discussion.DiscussionKey
     SQL
     )
 
-    # Trying to assign the category.user_id from the Community.CreatedByContactKey is a TRAP:
-    # for whatever reason (magic cessation spell?) it does not find the correspondence with the sql id of the imported user,
-    # even when the user with that ContactKey has already been imported.
-    # So we'll have to settle for the system user to be the creator of all these communities,
-    # which is pretty certain to displease the actual creators, given how displeased they are about the move already.
     create_categories(categories) do |c|
       category = {
         id: c['DiscussionKey'],
         name: c['DiscussionName'],
         description: c['Description'],
         created_at: c['CreatedOn'],
+        user_id: user_id_from_imported_user_id(c['CreatedByContactKey'])
       }
       category
     end
   end
 
-  def import_topics
-    puts "", "importing topics"
-
-    total_topics = @client.execute(<<-SQL
-      SELECT COUNT(*) count
-        FROM #{HL_ONS_PREFIX}Discussion
-    SQL
-    ).first["count"]
-
-    batches(BATCH_SIZE) do |offset|
-      posts = @client.execute(<<-SQL
-        SELECT DiscussionKey,
-               DiscussionName,
-               CreatedOn,
-               Body,
-               Subject,
-               Type,
-               ParentMessageKey
-          FROM #{HL_ONS_PREFIX}DiscussionPost
-          ORDER BY MessageKey
-          OFFSET #{offset} rows fetch next #{BATCH_SIZE} rows only
-      SQL
-      ).to_a
-
-      break if posts.empty?
-    end
-  end
-
-  def import_posts
-    puts "", "importing posts..."
+  def import_topics_and_posts
+    puts "", "Importing topics and posts..."
 
     total_posts = @client.execute(<<-SQL
       SELECT COUNT(*) count
@@ -142,14 +109,14 @@ class ImportScripts::HigherLogic < ImportScripts::Base
     batches(BATCH_SIZE) do |offset|
       posts = @client.execute(<<-SQL
         SELECT MessageKey,
-               ContactKey,
-               CreatedOn,
-               Body,
-               Subject,
-               Type,
-               ParentMessageKey
+               DiscussionPost.DiscussionKey, DiscussionName
+               CreatedOn, Body, Subject, ContactKey,
+               Type, MessageThreadKey,
+               ParentMessageKey, MessageID, ParentMessageID
           FROM #{HL_ONS_PREFIX}DiscussionPost
-          ORDER BY MessageKey
+          JOIN Discussion
+          ON Discussion.DiscussionKey = DiscussionPost.DiscussionKey
+          ORDER BY CreatedOn
           OFFSET #{offset} rows fetch next #{BATCH_SIZE} rows only
       SQL
       ).to_a
@@ -174,15 +141,15 @@ class ImportScripts::HigherLogic < ImportScripts::Base
           post[:raw].gsub!(/\<pre\>\<code(=[a-z]*)?\>(.*?)\<\/code\>\<\/pre\>/im) { "```\n#{@he.decode($2)}\n```" }
         end
 
-        if p["post_type"] == "topic"
-          post[:category] = category_id_from_imported_category_id(p["post_parent"])
-          post[:title] = CGI.unescapeHTML(p["post_title"])
+        if p["Type"] == "New"
+          post[:category] = category_id_from_imported_category_id(p["DiscussionKey"])
+          post[:title] = CGI.unescapeHTML(p["Subject"])
         else
-          if parent = topic_lookup_from_imported_post_id(p["post_parent"])
+          if parent = topic_lookup_from_imported_post_id(p["ParentMessageKey"])
             post[:topic_id] = parent[:topic_id]
             post[:reply_to_post_number] = parent[:post_number] if parent[:post_number] > 1
           else
-            puts "Skipping #{p["id"]}: #{p["post_content"][0..40]}"
+            puts "Skipping #{p["MessageKey"]} from '#{p["DiscussionName"]}': #{p["Subject"]} | Parent #{p["ParentMessageKey"]} | Thread #{p["MessageThreadKey"]}"
             skip = true
           end
         end
