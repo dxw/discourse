@@ -33,6 +33,14 @@ class ImportScripts::HigherLogic < ImportScripts::Base
     # create_permalinks
   end
 
+  ### Contact --> User
+  # Primary key: ContactKey
+  # Oddities:
+  # * Contact did not use any of the DisplayName or nickname columns, so we have to make up a username, which Discourse requires
+  # * Discourse doesn't have forenames / surnames, so we take our best guess by concatenating the original FirstName and LastName
+  # * A very small number of Contacts, and only one of them 'Enabled', don't have an email address registered, we have to skip them
+  # There are a lot more columns in the original Contact table, and a lot of related tables too
+  # Of likely interest: Permission tables
   def import_users
     puts "", "Importing users..."
 
@@ -73,6 +81,10 @@ class ImportScripts::HigherLogic < ImportScripts::Base
     end
   end
 
+  ### Community + Discussion --> Category
+  # Primary key: DiscussionKey
+  # They have an almost 1:1 mapping
+  # We have ignored the security group and permissions for now!
   def import_categories
     puts "", "Importing categories..."
 
@@ -97,6 +109,21 @@ class ImportScripts::HigherLogic < ImportScripts::Base
     end
   end
 
+  ### DiscussionPost --> Post
+  # Primary key: we've chosen MessageID, because it can be sorted in a more predictable order than MessageKey
+  # Topics get created with the same method as posts, based on the post not having a 'topic_id' attribute
+  # Topics must belong to a category, and must have a title
+  # Posts must belong to a topic
+  # The automagical topic grouping is the least understood (by me) part of the magic import scripts
+  # The original script didn't have a way to detect the topic for a reply-to-a-reply,
+  #   because the ParentMessageID points to the direct parent,
+  #   but does not point to the topic.
+  # I have modified the script to attempt finding the imported topic from the imported parent, and assign it to the n-th reply.
+  # Oddities: Discourse is allegedly flat, but it successfully detected nested replies within the largest thread I could find"
+  # ORIGINAL thread has 79 messages:
+  #   http://www.statsusernet.org.uk/communities/community-home/digestviewer/viewthread?GroupId=85&MID=6647&CommunityKey=3fb113ec-7c7f-424c-aad9-ae72f0a40f65&tab=digestviewer&ReturnUrl=%2fcommunities%2fcommunity-home%2fdigestviewer%3fcommunitykey%3d3fb113ec-7c7f-424c-aad9-ae72f0a40f65%26tab%3ddigestviewer
+  # IMPORTED has 78, one gets skipped for unknown reasons:
+  #   Find it in the category 'RPICPI User Group', topic 'National Statistician’s statement on the future of consumer price indices'
   def import_topics_and_posts
     puts "", "Importing topics and posts..."
 
@@ -110,11 +137,11 @@ class ImportScripts::HigherLogic < ImportScripts::Base
 
     batches(BATCH_SIZE) do |offset|
       posts = @client.execute(<<-SQL
-        SELECT MessageKey,
-               DiscussionPost.DiscussionKey, Discussion.DiscussionName
-               CreatedOn, Body, Subject, ContactKey,
+        SELECT MessageKey, MessageID,
                Type, MessageThreadKey,
-               ParentMessageKey, MessageID, ParentMessageID
+               CreatedOn, Body, Subject, ContactKey,
+               ParentMessageKey, ParentMessageID,
+               DiscussionPost.DiscussionKey, Discussion.DiscussionName
           FROM #{HL_ONS_PREFIX}DiscussionPost
           JOIN #{HL_ONS_PREFIX}Discussion
           ON Discussion.DiscussionKey = DiscussionPost.DiscussionKey
@@ -139,6 +166,8 @@ class ImportScripts::HigherLogic < ImportScripts::Base
           created_at: p["CreatedOn"],
         }
 
+        discussion_name = p["DiscussionName"]
+
         if post[:raw].present?
           post[:raw].gsub!(/\<pre\>\<code(=[a-z]*)?\>(.*?)\<\/code\>\<\/pre\>/im) { "```\n#{@he.decode($2)}\n```" }
         end
@@ -154,7 +183,9 @@ class ImportScripts::HigherLogic < ImportScripts::Base
             post[:topic_id] = parent.topic_id
             post[:reply_to_post_number] = parent.post_number if parent.post_number > 1
           else
-            puts "Skipping #{p["MessageKey"]} from '#{p["DiscussionName"]}': #{p["Subject"]} | Parent #{p["ParentMessageKey"]} | Thread #{p["MessageThreadKey"]}"
+            # We *could* instead import it as its own topic, by changing its Type to 'New',
+            # and assigning it a category and title similar to the Type == New branch above (we have the DiscussionKey and a Subject)
+            puts "Skipping #{p["MessageKey"]} from #{discussion_name}: #{p["Subject"]} | Parent #{p["ParentMessageKey"]} | Thread #{p["MessageThreadKey"]}"
             skip = true
           end
         end
@@ -164,6 +195,10 @@ class ImportScripts::HigherLogic < ImportScripts::Base
     end
   end
 
+  # The ENTITYCustomField seem to get populated by ~magic.
+  # The value of 'import_id' is the value of whatever we have designated as :id in the hash that is yielded to create_* methods (create_categories, create_users etc)
+  # For example, for a user we have given { id: 'ContactKey' }, because that's the primary key
+  # The custom fields belong to the Discourse record created from the original parameters
   def find_post_by_import_id(import_id)
     PostCustomField.where(name: 'import_id', value: import_id.to_s).first.try(:post)
   end
