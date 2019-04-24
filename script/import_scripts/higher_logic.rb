@@ -103,20 +103,22 @@ class ImportScripts::HigherLogic < ImportScripts::Base
     total_posts = @client.execute(<<-SQL
       SELECT COUNT(*) count
         FROM #{HL_ONS_PREFIX}DiscussionPost
+        JOIN #{HL_ONS_PREFIX}Discussion
+        ON Discussion.DiscussionKey = DiscussionPost.DiscussionKey
     SQL
     ).first["count"]
 
     batches(BATCH_SIZE) do |offset|
       posts = @client.execute(<<-SQL
         SELECT MessageKey,
-               DiscussionPost.DiscussionKey, DiscussionName
+               DiscussionPost.DiscussionKey, Discussion.DiscussionName
                CreatedOn, Body, Subject, ContactKey,
                Type, MessageThreadKey,
                ParentMessageKey, MessageID, ParentMessageID
           FROM #{HL_ONS_PREFIX}DiscussionPost
-          JOIN Discussion
+          JOIN #{HL_ONS_PREFIX}Discussion
           ON Discussion.DiscussionKey = DiscussionPost.DiscussionKey
-          ORDER BY CreatedOn
+          ORDER BY MessageID
           OFFSET #{offset} rows fetch next #{BATCH_SIZE} rows only
       SQL
       ).to_a
@@ -131,7 +133,7 @@ class ImportScripts::HigherLogic < ImportScripts::Base
                   -1
 
         post = {
-          id: p["MessageKey"],
+          id: p["MessageID"],
           user_id: user_id,
           raw: p["Body"],
           created_at: p["CreatedOn"],
@@ -145,9 +147,12 @@ class ImportScripts::HigherLogic < ImportScripts::Base
           post[:category] = category_id_from_imported_category_id(p["DiscussionKey"])
           post[:title] = CGI.unescapeHTML(p["Subject"])
         else
-          if parent = topic_lookup_from_imported_post_id(p["ParentMessageKey"])
+          if parent = topic_lookup_from_imported_post_id(p["ParentMessageID"])
             post[:topic_id] = parent[:topic_id]
             post[:reply_to_post_number] = parent[:post_number] if parent[:post_number] > 1
+          elsif parent = find_post_by_import_id(p["ParentMessageID"])
+            post[:topic_id] = parent.topic_id
+            post[:reply_to_post_number] = parent.post_number if parent.post_number > 1
           else
             puts "Skipping #{p["MessageKey"]} from '#{p["DiscussionName"]}': #{p["Subject"]} | Parent #{p["ParentMessageKey"]} | Thread #{p["MessageThreadKey"]}"
             skip = true
@@ -157,6 +162,10 @@ class ImportScripts::HigherLogic < ImportScripts::Base
         skip ? nil : post
       end
     end
+  end
+
+  def find_post_by_import_id(import_id)
+    PostCustomField.where(name: 'import_id', value: import_id.to_s).first.try(:post)
   end
 
   def import_attachments
