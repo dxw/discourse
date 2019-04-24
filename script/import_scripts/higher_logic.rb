@@ -39,8 +39,10 @@ class ImportScripts::HigherLogic < ImportScripts::Base
   # * Contact did not use any of the DisplayName or nickname columns, so we have to make up a username, which Discourse requires
   # * Discourse doesn't have forenames / surnames, so we take our best guess by concatenating the original FirstName and LastName
   # * A very small number of Contacts, and only one of them 'Enabled', don't have an email address registered, we have to skip them
+  #
   # There are a lot more columns in the original Contact table, and a lot of related tables too
-  # Of likely interest: Permission tables
+  # Of likely interest: CommunityMember join table, ContactSecurityGroup
+  # Discourse has category_groups, which could probably give them some of the functionality of the closed, invitation-only communities
   def import_users
     puts "", "Importing users..."
 
@@ -84,15 +86,31 @@ class ImportScripts::HigherLogic < ImportScripts::Base
   ### Community + Discussion --> Category
   # Primary key: DiscussionKey
   # They have an almost 1:1 mapping
-  # We have ignored the security group and permissions for now!
+  #
+  # Community is the entity carrying the permissions info, both as Join and View permissions.
+  #
+  # A first attempt at restricting viewing permissions: if the original was anything but 'Public', restrict it (can always be opened up)
+  #
+  # Discourse has category_groups, which could probably give them some of the functionality of the closed, invitation-only communities.
+  # It also has a set number of "autogroups", one of which is 'trust_level_0' for Authenticated only, and would give them more than the
+  # binary of 'read_restricted'.
+  #
+  # CommunityMember also has information about subscriptions and email addresses, which they were interested in keeping,
+  # and could possibly map with Discourse's category_users.
   def import_categories
     puts "", "Importing categories..."
 
     categories = @client.execute(<<-SQL
-      SELECT Discussion.DiscussionKey, DiscussionName, Description, Community.CreatedOn, Community.CreatedByContactKey
+      SELECT Discussion.DiscussionKey, DiscussionName,
+             Description, Community.CreatedOn, Community.CreatedByContactKey,
+             p1.PermissionName as ViewPermissionName
       FROM #{HL_ONS_PREFIX}Discussion
       JOIN #{HL_ONS_PREFIX}Community
       ON Discussion.DiscussionKey = Community.DiscussionKey
+      JOIN Permission as p1
+      ON p1.PermissionKey = Community.ViewPermissionKey
+      JOIN Permission as p2
+      ON p2.PermissionKey = Community.JoinPermissionKey
       ORDER BY Discussion.DiscussionKey
     SQL
     )
@@ -103,7 +121,8 @@ class ImportScripts::HigherLogic < ImportScripts::Base
         name: c['DiscussionName'],
         description: c['Description'],
         created_at: c['CreatedOn'],
-        user_id: user_id_from_imported_user_id(c['CreatedByContactKey'])
+        user_id: user_id_from_imported_user_id(c['CreatedByContactKey']),
+        read_restricted: c['ViewPermissionName'].to_s.downcase != 'public'
       }
       category
     end
