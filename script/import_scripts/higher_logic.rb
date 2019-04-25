@@ -25,12 +25,22 @@ class ImportScripts::HigherLogic < ImportScripts::Base
   end
 
   def execute
+    import_groups
     import_users
     import_categories
+    # import_category_group_permissions
     import_topics_and_posts
     # import_private_messages
     # import_attachments
     # create_permalinks
+  end
+
+  ### Community --> Group, but only for those Communities that have some restrictive permission, such as https://dxw.slack.com/archives/CHC2H69HP/p1556205608011800
+  # through JoinPermissionKey and ViewPermissionKey
+  ### SecurityGroup --> Group, but only for the custom SecGroups that have a meaning, such as https://dxw.slack.com/archives/CHC2H69HP/p1556204065011500
+  def import_groups
+    puts "Importing groups..."
+    puts "NOT IMPLEMENTED!"
   end
 
   ### Contact --> User
@@ -40,9 +50,9 @@ class ImportScripts::HigherLogic < ImportScripts::Base
   # * Discourse doesn't have forenames / surnames, so we take our best guess by concatenating the original FirstName and LastName
   # * A very small number of Contacts, and only one of them 'Enabled', don't have an email address registered, we have to skip them
   #
-  # There are a lot more columns in the original Contact table, and a lot of related tables too
-  # Of likely interest: CommunityMember join table, ContactSecurityGroup
   # Discourse has category_groups, which could probably give them some of the functionality of the closed, invitation-only communities
+  ## CommunityMember --> GroupUser to join with Group, if created at import_groups
+  ## ContactSecurityGroup --> GroupUser
   def import_users
     puts "", "Importing users..."
 
@@ -128,6 +138,30 @@ class ImportScripts::HigherLogic < ImportScripts::Base
     end
   end
 
+  # TODO! The final piece would be to join those restricted categories with groups created at the previous steps
+  # and give the join the kind of permission_type that applies
+  # I don't know if 1 (:full) means permission to delete or just create topic
+  # 2 (:create_post) seems to be to comment on existing topics, rather than create new topics
+  # 3 is the clearest: :readonly
+  def import_category_group_permissions
+    # pseudocode ahoy!
+    categories.each do |ic|
+      category = Category.find(category_id_from_imported_category_id(ic['DiscussionKey']))
+      next unless category
+
+      case ic['ViewPermissionName']
+        # we don't need to do anything if it's already 'Public', it would have been created as not read_restricted and everyone can view
+      when 'Authenticated'
+        CategoryGroup.create!(category: category, group: Group::AUTO_GROUPS[:trust_level_0])
+      when 'MembersOnly', 'InvitationOnly'
+        # TODO, probably:
+        # * retrieve the group for this category and create a category_group to join the categ with the group
+        # * give it a permission_type from the enum (full: 1, create_post: 2, readonly: 3)
+        # CategoryGroup.create!(category: category, group: CUSTOM_GROUP_FOR_THAT_COMMUNITY)
+      end
+    end
+  end
+
   ### DiscussionPost --> Post
   # Primary key: we've chosen MessageID, because it can be sorted in a more predictable order than MessageKey
   # Topics get created with the same method as posts, based on the post not having a 'topic_id' attribute
@@ -143,6 +177,9 @@ class ImportScripts::HigherLogic < ImportScripts::Base
   #   http://www.statsusernet.org.uk/communities/community-home/digestviewer/viewthread?GroupId=85&MID=6647&CommunityKey=3fb113ec-7c7f-424c-aad9-ae72f0a40f65&tab=digestviewer&ReturnUrl=%2fcommunities%2fcommunity-home%2fdigestviewer%3fcommunitykey%3d3fb113ec-7c7f-424c-aad9-ae72f0a40f65%26tab%3ddigestviewer
   # IMPORTED has 78, one gets skipped for unknown reasons:
   #   Find it in the category 'RPICPI User Group', topic 'National Statistician’s statement on the future of consumer price indices'
+
+  ### A big one we forgot about is Blog! They only seem connected by DiscussionKey and ContactKey, so not topics on their own,
+  # but if Discourse doesn't have a specific blog-like entity, we might have to import them as topics...
   def import_topics_and_posts
     puts "", "Importing topics and posts..."
 
@@ -222,6 +259,7 @@ class ImportScripts::HigherLogic < ImportScripts::Base
     PostCustomField.where(name: 'import_id', value: import_id.to_s).first.try(:post)
   end
 
+  # everything from here on is unmodified bbpress-specific import code
   def import_attachments
     import_attachments_from_postmeta
     import_attachments_from_bb_attachments
