@@ -213,16 +213,12 @@ class ImportScripts::HigherLogic < ImportScripts::Base
 
         post = {
           id: p["MessageID"],
-          raw: p["Body"],
           user_id: find_user_id(p["ContactKey"]),
+          raw: format_body(p["Body"]),
           created_at: p["CreatedOn"],
         }
 
         discussion_name = p["DiscussionName"]
-
-        if post[:raw].present?
-          post[:raw].gsub!(/\<pre\>\<code(=[a-z]*)?\>(.*?)\<\/code\>\<\/pre\>/im) { "```\n#{@he.decode($2)}\n```" }
-        end
 
         if p["Type"] == "New"
           post[:category] = category_id_from_imported_category_id(p["DiscussionKey"])
@@ -259,6 +255,14 @@ class ImportScripts::HigherLogic < ImportScripts::Base
     user_id_from_imported_user_id(contact_key) ||
     find_user_by_import_id(contact_key).try(:id) ||
     -1
+  end
+
+  def format_body(body)
+    if body.present?
+      body.gsub(/\<pre\>\<code(=[a-z]*)?\>(.*?)\<\/code\>\<\/pre\>/im) { "```\n#{@he.decode($2)}\n```" }
+    else
+      body
+    end
   end
 
   # everything from here on is unmodified bbpress-specific import code
