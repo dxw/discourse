@@ -31,7 +31,7 @@ class ImportScripts::HigherLogic < ImportScripts::Base
     # import_category_group_permissions
     import_topics_and_posts
     # import_private_messages
-    # import_attachments
+    import_attachments
     # create_permalinks
   end
 
@@ -266,6 +266,35 @@ class ImportScripts::HigherLogic < ImportScripts::Base
   end
 
   def import_attachments
+    import_library_entries
+  end
+
+  def import_library_entries
+    puts "", "Importing posts from LibraryEntry..."
+
+    posts = @client.execute(<<-SQL
+      SELECT LibraryEntry.DocumentKey,
+             LibraryEntry.CreatedOn,
+             LibraryEntry.EntryDescription,
+             LibraryEntry.EntryTitle,
+             LibraryEntry.ContactKey,
+             Community.DiscussionKey
+        FROM #{HL_ONS_PREFIX}LibraryEntry
+        JOIN #{HL_ONS_PREFIX}Community
+          ON LibraryEntry.LibraryKey = Community.LibraryKey
+    SQL
+    ).to_a
+
+    create_posts(posts) do |p|
+      {
+        id: p["DocumentKey"],
+        user_id: find_user_id(p["ContactKey"]),
+        raw: format_body(p["EntryDescription"]),
+        created_at: p["CreatedOn"],
+        category: category_id_from_imported_category_id(p["DiscussionKey"]),
+        title: CGI.unescapeHTML(p["EntryTitle"]),
+      }
+    end
   end
 
   def create_permalinks
