@@ -9,7 +9,7 @@ class ImportScripts::HigherLogic < ImportScripts::Base
   HL_ONS_PREFIX          ||= ENV['HL_ONS_PREFIX'] || "dbo."
 
   BATCH_SIZE             ||= 1000
-  # HL_ONS_ATTACHMENTS_DIR ||= ENV['HL_ONS_ATTACHMENTS_DIR'] || "/path/to/attachments"
+  HL_ONS_ATTACHMENTS_DIR ||= ENV.fetch('HL_ONS_ATTACHMENTS_DIR')
 
   def initialize
     super
@@ -267,6 +267,7 @@ class ImportScripts::HigherLogic < ImportScripts::Base
 
   def import_attachments
     import_library_entries
+    import_library_entry_files
   end
 
   def import_library_entries
@@ -295,6 +296,65 @@ class ImportScripts::HigherLogic < ImportScripts::Base
         title: CGI.unescapeHTML(p["EntryTitle"]),
       }
     end
+  end
+
+  # Each LibraryEntryFile represents a single file. If `OriginalFileName` is
+  # NULL we can construct the filename using `VersionName` and `FileExtension`.
+  # If it's NOT NULL it means (I think!) it was renamed during upload due to a
+  # name clash. In that case we might be able to use `OriginalFileName`
+  # directly (without adding the extension).
+  def import_library_entry_files
+    puts "", "Importing files from LibraryEntryFile..."
+
+    attachments = @client.execute(<<-SQL
+      SELECT LibraryEntryFile.DocumentKey,
+             LibraryEntryFile.VersionName,
+             LibraryEntryFile.FileExtension,
+             LibraryEntryFile.OriginalFileName,
+             Library.LibraryName
+        FROM #{HL_ONS_PREFIX}LibraryEntryFile
+        JOIN #{HL_ONS_PREFIX}LibraryEntry
+          ON LibraryEntryFile.DocumentKey = LibraryEntry.DocumentKey
+        JOIN #{HL_ONS_PREFIX}Library
+          ON LibraryEntry.LibraryKey = Library.LibraryKey
+    SQL
+    ).to_a
+
+    total_attachments = attachments.count
+
+    attachments.each.with_index do |a, i|
+      print_status(i, total_attachments, get_start_time("import_library_entry_files"))
+
+      path = find_file(a)
+
+      if path
+        if post = find_post_by_import_id(a["DocumentKey"])
+          filename = File.basename(path)
+          upload = create_upload(post.user.id, path, filename)
+          if upload&.persisted?
+            html = html_for_upload(upload, filename)
+            if !post.raw[html]
+              post.raw << "\n\n" << html
+              post.save!
+              PostUpload.create!(post: post, upload: upload) unless PostUpload.where(post: post, upload: upload).exists?
+            end
+          end
+        end
+      end
+    end
+  end
+
+  def find_file(a)
+    path = File.join(HL_ONS_ATTACHMENTS_DIR, a["LibraryName"], "#{a["VersionName"]}.#{a["FileExtension"]}")
+    return path if File.exists?(path)
+
+    if a["OriginalFileName"].present?
+      path = File.join(HL_ONS_ATTACHMENTS_DIR, a["LibraryName"], a["OriginalFileName"])
+      return path if File.exists?(path)
+    end
+
+    puts "Couldn't find file #{a["VersionName"]} from #{a["LibraryName"]}"
+    nil
   end
 
   def create_permalinks
