@@ -265,67 +265,7 @@ class ImportScripts::HigherLogic < ImportScripts::Base
     end
   end
 
-  # everything from here on is unmodified bbpress-specific import code
   def import_attachments
-    import_attachments_from_postmeta
-    import_attachments_from_bb_attachments
-  end
-
-  def import_attachments_from_postmeta
-    puts "", "Importing attachments from 'postmeta'..."
-
-    count = 0
-    last_attachment_id = -1
-
-    total_attachments = bbpress_query(<<-SQL
-      SELECT COUNT(*) count
-        FROM #{HL_ONS_PREFIX}postmeta pm
-        JOIN #{HL_ONS_PREFIX}posts p ON p.id = pm.post_id
-       WHERE pm.meta_key = '_wp_attached_file'
-         AND p.post_parent > 0
-    SQL
-    ).first["count"]
-
-    batches(BATCH_SIZE) do |offset|
-      attachments = bbpress_query(<<-SQL
-        SELECT pm.meta_id id, pm.meta_value, p.post_parent post_id
-          FROM #{HL_ONS_PREFIX}postmeta pm
-          JOIN #{HL_ONS_PREFIX}posts p ON p.id = pm.post_id
-         WHERE pm.meta_key = '_wp_attached_file'
-           AND p.post_parent > 0
-           AND pm.meta_id > #{last_attachment_id}
-      ORDER BY pm.meta_id
-         LIMIT #{BATCH_SIZE}
-      SQL
-      ).to_a
-
-      break if attachments.empty?
-      last_attachment_id = attachments[-1]["id"].to_i
-
-      attachments.each do |a|
-        print_status(count += 1, total_attachments, get_start_time("attachments_from_postmeta"))
-        path = File.join(BB_PRESS_ATTACHMENTS_DIR, a["meta_value"])
-        if File.exists?(path)
-          if post = Post.find_by(id: post_id_from_imported_post_id(a["post_id"]))
-            filename = File.basename(a["meta_value"])
-            upload = create_upload(post.user.id, path, filename)
-            if upload&.persisted?
-              html = html_for_upload(upload, filename)
-              if !post.raw[html]
-                post.raw << "\n\n" << html
-                post.save!
-                PostUpload.create!(post: post, upload: upload) unless PostUpload.where(post: post, upload: upload).exists?
-              end
-            end
-          end
-        end
-      end
-    end
-  end
-
-  def find_attachment(filename, id)
-    @attachments ||= Dir[File.join(BB_PRESS_ATTACHMENTS_DIR, "vf-attachs", "**", "*.*")]
-    @attachments.find { |p| p.end_with?("/#{id}.#{filename}") }
   end
 
   def create_permalinks
