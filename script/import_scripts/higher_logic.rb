@@ -211,14 +211,10 @@ class ImportScripts::HigherLogic < ImportScripts::Base
       create_posts(posts, total: total_posts, offset: offset) do |p|
         skip = false
 
-        user_id = user_id_from_imported_user_id(p["ContactKey"]) ||
-                  find_user_by_import_id(p["ContactKey"]).try(:id) ||
-                  -1
-
         post = {
           id: p["MessageID"],
-          user_id: user_id,
           raw: p["Body"],
+          user_id: find_user_id(p["ContactKey"]),
           created_at: p["CreatedOn"],
         }
 
@@ -257,6 +253,12 @@ class ImportScripts::HigherLogic < ImportScripts::Base
   # The custom fields belong to the Discourse record created from the original parameters
   def find_post_by_import_id(import_id)
     PostCustomField.where(name: 'import_id', value: import_id.to_s).first.try(:post)
+  end
+
+  def find_user_id(contact_key)
+    user_id_from_imported_user_id(contact_key) ||
+    find_user_by_import_id(contact_key).try(:id) ||
+    -1
   end
 
   # everything from here on is unmodified bbpress-specific import code
