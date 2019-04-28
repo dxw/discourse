@@ -13,6 +13,7 @@ class ImportScripts::HigherLogic < ImportScripts::Base
 
   LIBRARY_TAG            ||= 'library'
   ANNOUNCEMENT_TAG       ||= 'announcement'
+  BLOG_TAG               ||= 'blog'
 
   def initialize
     super
@@ -38,6 +39,7 @@ class ImportScripts::HigherLogic < ImportScripts::Base
     # import_private_messages
     import_attachments
     import_announcements
+    import_blogs
     # create_permalinks
   end
 
@@ -433,6 +435,76 @@ class ImportScripts::HigherLogic < ImportScripts::Base
         category: category_id_from_imported_category_id(p["DiscussionKey"]),
         title: CGI.unescapeHTML(p["AnnouncementTitle"]),
         tags: [ANNOUNCEMENT_TAG],
+      }
+    end
+  end
+
+  def import_blogs
+    import_posts_from_blog
+    import_item_comments_for_blogs
+  end
+
+  def import_posts_from_blog
+    puts "", "Importing posts from Blog..."
+
+    posts = @client.execute(<<-SQL
+      SELECT Blog.BlogKey,
+             Blog.PublishedOn,
+             Blog.Title,
+             Blog.Description,
+             Blog.CreatedByContactKey,
+             Community.DiscussionKey
+        FROM #{HL_ONS_PREFIX}Blog
+   LEFT JOIN #{HL_ONS_PREFIX}Community
+          ON Blog.CommunityKey = Community.CommunityKey
+    SQL
+    ).to_a
+
+    create_posts(posts) do |p|
+      {
+        id: p["BlogKey"],
+        user_id: find_user_id(p["CreatedByContactKey"]),
+        raw: format_body(p["Description"]),
+        created_at: p["PublishedOn"],
+        category: category_id_from_imported_category_id(p["DiscussionKey"]),
+        title: CGI.unescapeHTML(p["Title"]),
+        tags: [BLOG_TAG],
+      }
+    end
+  end
+
+  def import_item_comments_for_blogs
+    puts "", "Importing replies to blogs from ItemComment..."
+
+    posts = @client.execute(<<-SQL
+      SELECT ItemComment.ItemKey,
+             ItemComment.Comment,
+             ItemComment.ContactKey,
+             ItemComment.CreatedOn
+        FROM #{HL_ONS_PREFIX}ItemComment
+        JOIN #{HL_ONS_PREFIX}Blog
+          ON ItemComment.ItemKey = Blog.BlogKey
+       WHERE ItemType = 'Blog'
+    SQL
+    ).to_a
+
+    create_posts(posts) do |p|
+      parent = find_post_by_import_id(p["ItemKey"])
+
+      # if we can't find the parent, it's for a post we didn't import
+      if parent.nil?
+        puts "Can't find parent post for ItemComment #{p["ItemKey"]}; skipping"
+        return nil
+      end
+
+      {
+        # there's no unique ID for this; since we're not going to need to
+        # reference it again, we use `nil`
+        id: nil,
+        user_id: find_user_id(p["ContactKey"]),
+        raw: format_body(p["Comment"]),
+        created_at: p["CreatedOn"],
+        topic_id: parent.topic_id,
       }
     end
   end
