@@ -268,6 +268,7 @@ class ImportScripts::HigherLogic < ImportScripts::Base
   def import_attachments
     import_library_entries
     import_library_entry_files
+    import_item_comments_for_library_entries
   end
 
   def import_library_entries
@@ -355,6 +356,42 @@ class ImportScripts::HigherLogic < ImportScripts::Base
 
     puts "Couldn't find file #{a["VersionName"]} from #{a["LibraryName"]}"
     nil
+  end
+
+  def import_item_comments_for_library_entries
+    puts "", "Importing replies to attachments from ItemComment..."
+
+    posts = @client.execute(<<-SQL
+      SELECT ItemComment.ItemKey,
+             ItemComment.Comment,
+             ItemComment.ContactKey,
+             ItemComment.CreatedOn
+        FROM #{HL_ONS_PREFIX}ItemComment
+        JOIN #{HL_ONS_PREFIX}LibraryEntry
+          ON ItemComment.ItemKey = LibraryEntry.DocumentKey
+       WHERE ItemType = 'LibraryEntry'
+    SQL
+    ).to_a
+
+    create_posts(posts) do |p|
+      parent = find_post_by_import_id(p["ItemKey"])
+
+      # if we can't find the parent, it's for a post we didn't import
+      if parent.nil?
+        puts "Can't find parent post for ItemComment #{p["ItemKey"]}; skipping"
+        return nil
+      end
+
+      {
+        # there's no unique ID for this; since we're not going to need to
+        # reference it again, we use `nil`
+        id: nil,
+        user_id: find_user_id(p["ContactKey"]),
+        raw: format_body(p["Comment"]),
+        created_at: p["CreatedOn"],
+        topic_id: parent.topic_id,
+      }
+    end
   end
 
   def create_permalinks
