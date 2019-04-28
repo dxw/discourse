@@ -12,6 +12,7 @@ class ImportScripts::HigherLogic < ImportScripts::Base
   HL_ONS_ATTACHMENTS_DIR ||= ENV.fetch('HL_ONS_ATTACHMENTS_DIR')
 
   LIBRARY_TAG            ||= 'library'
+  ANNOUNCEMENT_TAG       ||= 'announcement'
 
   def initialize
     super
@@ -36,6 +37,7 @@ class ImportScripts::HigherLogic < ImportScripts::Base
     import_topics_and_posts
     # import_private_messages
     import_attachments
+    import_announcements
     # create_permalinks
   end
 
@@ -395,6 +397,42 @@ class ImportScripts::HigherLogic < ImportScripts::Base
         raw: format_body(p["Comment"]),
         created_at: p["CreatedOn"],
         topic_id: parent.topic_id,
+      }
+    end
+  end
+
+  def import_announcements
+    puts "", "Importing posts from Announcement..."
+
+    posts = @client.execute(<<-SQL
+      SELECT Announcement.AnnouncementKey,
+             Announcement.CreatedOn,
+             Announcement.AnnouncementTitle,
+             Announcement.AnnouncementText,
+             Announcement.CreatedByContactKey,
+             Announcement.LinkUrl,
+             Announcement.LinkText,
+             Community.DiscussionKey
+        FROM #{HL_ONS_PREFIX}Announcement
+   LEFT JOIN #{HL_ONS_PREFIX}Community
+          ON Announcement.CommunityKey = Community.CommunityKey
+    SQL
+    ).to_a
+
+    create_posts(posts) do |p|
+      body = [
+        p["AnnouncementText"],
+        p["LinkUrl"].present? ? "[#{p["LinkText"]}](#{p["LinkUrl"]})" : ""
+      ].reject(&:blank?).join("\n\n")
+
+      {
+        id: p["AnnouncementKey"],
+        user_id: find_user_id(p["CreatedByContactKey"]),
+        raw: format_body(body),
+        created_at: p["CreatedOn"],
+        category: category_id_from_imported_category_id(p["DiscussionKey"]),
+        title: CGI.unescapeHTML(p["AnnouncementTitle"]),
+        tags: [ANNOUNCEMENT_TAG],
       }
     end
   end
