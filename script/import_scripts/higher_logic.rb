@@ -11,6 +11,8 @@ class ImportScripts::HigherLogic < ImportScripts::Base
   BATCH_SIZE             ||= 1000
   HL_ONS_ATTACHMENTS_DIR ||= ENV.fetch('HL_ONS_ATTACHMENTS_DIR')
 
+  LIBRARY_TAG            ||= 'library'
+
   def initialize
     super
 
@@ -25,6 +27,8 @@ class ImportScripts::HigherLogic < ImportScripts::Base
   end
 
   def execute
+    SiteSetting.tagging_enabled = true
+
     import_groups
     import_users
     import_categories
@@ -295,6 +299,7 @@ class ImportScripts::HigherLogic < ImportScripts::Base
         created_at: p["CreatedOn"],
         category: category_id_from_imported_category_id(p["DiscussionKey"]),
         title: CGI.unescapeHTML(p["EntryTitle"]),
+        tags: [LIBRARY_TAG],
       }
     end
   end
