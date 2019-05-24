@@ -103,7 +103,7 @@ class ImportScripts::HigherLogic < ImportScripts::Base
 
   ### Community + Discussion --> Category
   # Primary key: DiscussionKey
-  # They have an almost 1:1 mapping
+  # They have an almost 1:1 mapping: LEFT OUTER JOIN captures Communities without a Discussion
   #
   # Community is the entity carrying the permissions info, both as Join and View permissions.
   #
@@ -120,23 +120,27 @@ class ImportScripts::HigherLogic < ImportScripts::Base
 
     categories = @client.execute(<<-SQL
       SELECT Discussion.DiscussionKey, DiscussionName,
+             Community.CommunityKey, CommunityName,
              Description, Community.CreatedOn, Community.CreatedByContactKey,
              p1.PermissionName as ViewPermissionName
-      FROM #{HL_ONS_PREFIX}Discussion
-      JOIN #{HL_ONS_PREFIX}Community
+      FROM #{HL_ONS_PREFIX}Community
+      LEFT OUTER JOIN #{HL_ONS_PREFIX}Discussion
       ON Discussion.DiscussionKey = Community.DiscussionKey
       JOIN Permission as p1
       ON p1.PermissionKey = Community.ViewPermissionKey
       JOIN Permission as p2
       ON p2.PermissionKey = Community.JoinPermissionKey
-      ORDER BY Discussion.DiscussionKey
+      ORDER BY Community.CommunityKey
     SQL
     )
 
     create_categories(categories) do |c|
+      category_name = c['DiscussionName'].to_s.strip.presence || c['CommunityName'].to_s
+      category_id = c['DiscussionKey'].presence || c['CommunityKey']
+
       category = {
-        id: c['DiscussionKey'],
-        name: c['DiscussionName'],
+        id: category_id,
+        name: category_name,
         description: c['Description'],
         created_at: c['CreatedOn'],
         user_id: user_id_from_imported_user_id(c['CreatedByContactKey']),
