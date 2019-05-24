@@ -292,6 +292,7 @@ class ImportScripts::HigherLogic < ImportScripts::Base
              LibraryEntry.EntryDescription,
              LibraryEntry.EntryTitle,
              LibraryEntry.ContactKey,
+             Community.CommunityKey,
              Community.DiscussionKey
         FROM #{HL_ONS_PREFIX}LibraryEntry
         JOIN #{HL_ONS_PREFIX}Community
@@ -300,12 +301,17 @@ class ImportScripts::HigherLogic < ImportScripts::Base
     ).to_a
 
     create_posts(posts) do |p|
+      # Attempt to find the category based on Community, if there was no Discussion in the first place
+      original_discussion_key = p["DiscussionKey"].to_s.strip.presence
+      original_community_key = p["CommunityKey"]
+      category_id = category_id_from_imported_category_id(original_discussion_key || original_community_key)
+
       {
         id: p["DocumentKey"],
         user_id: find_user_id(p["ContactKey"]),
         raw: format_body(p["EntryDescription"]),
         created_at: p["CreatedOn"],
-        category: category_id_from_imported_category_id(p["DiscussionKey"]),
+        category: category_id,
         title: CGI.unescapeHTML(p["EntryTitle"]),
         tags: [LIBRARY_TAG],
       }
