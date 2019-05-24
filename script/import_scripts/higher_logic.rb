@@ -190,9 +190,6 @@ class ImportScripts::HigherLogic < ImportScripts::Base
   #   http://www.statsusernet.org.uk/communities/community-home/digestviewer/viewthread?GroupId=85&MID=6647&CommunityKey=3fb113ec-7c7f-424c-aad9-ae72f0a40f65&tab=digestviewer&ReturnUrl=%2fcommunities%2fcommunity-home%2fdigestviewer%3fcommunitykey%3d3fb113ec-7c7f-424c-aad9-ae72f0a40f65%26tab%3ddigestviewer
   # IMPORTED has 78, one gets skipped for unknown reasons:
   #   Find it in the category 'RPICPI User Group', topic 'National Statistician’s statement on the future of consumer price indices'
-
-  ### A big one we forgot about is Blog! They only seem connected by DiscussionKey and ContactKey, so not topics on their own,
-  # but if Discourse doesn't have a specific blog-like entity, we might have to import them as topics...
   def import_topics_and_posts
     puts "", "Importing topics and posts..."
 
