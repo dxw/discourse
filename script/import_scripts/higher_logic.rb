@@ -95,7 +95,10 @@ class ImportScripts::HigherLogic < ImportScripts::Base
           name: [u['FirstName'].to_s, u['LastName'].to_s].compact.join(' '),
           created_at: u['CreatedOn'],
           last_seen_at: u['lastLoginDate'],
-          admin: u['HLAdminFlag']
+          admin: u['HLAdminFlag'],
+          approved: true,
+          approved_at: Time.now.in_time_zone,
+          approved_by_id: 1
         }
       end
     end
