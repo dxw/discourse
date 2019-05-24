@@ -184,6 +184,7 @@ class ImportScripts::HigherLogic < ImportScripts::Base
   #   because the ParentMessageID points to the direct parent,
   #   but does not point to the topic.
   # I have modified the script to attempt finding the imported topic from the imported parent, and assign it to the n-th reply.
+  # If the parent just cannot be found, we import the post as its own topic
   # Oddities: Discourse is allegedly flat, but it successfully detected nested replies within the largest thread I could find"
   # ORIGINAL thread has 79 messages:
   #   http://www.statsusernet.org.uk/communities/community-home/digestviewer/viewthread?GroupId=85&MID=6647&CommunityKey=3fb113ec-7c7f-424c-aad9-ae72f0a40f65&tab=digestviewer&ReturnUrl=%2fcommunities%2fcommunity-home%2fdigestviewer%3fcommunitykey%3d3fb113ec-7c7f-424c-aad9-ae72f0a40f65%26tab%3ddigestviewer
@@ -230,8 +231,6 @@ class ImportScripts::HigherLogic < ImportScripts::Base
           created_at: p["CreatedOn"],
         }
 
-        discussion_name = p["DiscussionName"]
-
         if p["Type"] == "New"
           post[:category] = category_id_from_imported_category_id(p["DiscussionKey"])
           post[:title] = CGI.unescapeHTML(p["Subject"])
@@ -243,10 +242,10 @@ class ImportScripts::HigherLogic < ImportScripts::Base
             post[:topic_id] = parent.topic_id
             post[:reply_to_post_number] = parent.post_number if parent.post_number > 1
           else
-            # We *could* instead import it as its own topic, by changing its Type to 'New',
-            # and assigning it a category and title similar to the Type == New branch above (we have the DiscussionKey and a Subject)
-            puts "Skipping #{p["MessageKey"]} from #{discussion_name}: #{p["Subject"]} | Parent #{p["ParentMessageKey"]} | Thread #{p["MessageThreadKey"]}"
-            skip = true
+            # Could not find parent, so we will import it as its own topic,
+            # by assigning it a category and title similar to the Type == New branch above
+            post[:category] = category_id_from_imported_category_id(p["DiscussionKey"])
+            post[:title] = CGI.unescapeHTML(p["Subject"])
           end
         end
 
