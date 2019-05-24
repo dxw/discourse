@@ -370,9 +370,15 @@ class ImportScripts::HigherLogic < ImportScripts::Base
     if a["OriginalFileName"].present?
       path = File.join(HL_ONS_ATTACHMENTS_DIR, a["LibraryName"], a["OriginalFileName"])
       return path if File.exists?(path)
+
+      path = File.join(HL_ONS_ATTACHMENTS_DIR, a["LibraryName"], a["OriginalFileName"].split("\\").last)
+      return path if File.exists?(path)
+
+      path = File.join(HL_ONS_ATTACHMENTS_DIR, a["OriginalFileName"].split("\\").last)
+      return path if File.exists?(path)
     end
 
-    puts "Couldn't find file #{a["VersionName"]} from #{a["LibraryName"]}"
+    puts "Couldn't find file #{a["VersionName"]} from #{a["LibraryName"]}, last path checked: #{path}"
     nil
   end
 
