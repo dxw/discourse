@@ -277,9 +277,36 @@ class ImportScripts::HigherLogic < ImportScripts::Base
   end
 
   def import_attachments
+    import_libraries_without_communities
     import_library_entries
     import_library_entry_files
     import_item_comments_for_library_entries
+  end
+
+  # 46 libraries have a community. 5 do not. This imports those 5 as
+  # categories, so we have somewhere to hang its entries.
+  def import_libraries_without_communities
+    puts "", "Importing libraries as categories..."
+
+    libraries = @client.execute(<<-SQL
+      SELECT Library.LibraryKey,
+             Library.LibraryName,
+             Library.LibraryDescription
+        FROM #{HL_ONS_PREFIX}Library
+   LEFT JOIN #{HL_ONS_PREFIX}Community
+          ON Library.LibraryKey = Community.LibraryKey
+       WHERE Community.CommunityKey IS NULL
+    SQL
+    ).to_a
+
+    create_categories(libraries) do |c|
+      {
+        id: c['LibraryKey'],
+        name: c['LibraryName'],
+        description: c['LibraryDescription'],
+        read_restricted: true,
+      }
+    end
   end
 
   def import_library_entries
@@ -291,10 +318,11 @@ class ImportScripts::HigherLogic < ImportScripts::Base
              LibraryEntry.EntryDescription,
              LibraryEntry.EntryTitle,
              LibraryEntry.ContactKey,
+             LibraryEntry.LibraryKey,
              Community.CommunityKey,
              Community.DiscussionKey
         FROM #{HL_ONS_PREFIX}LibraryEntry
-        JOIN #{HL_ONS_PREFIX}Community
+   LEFT JOIN #{HL_ONS_PREFIX}Community
           ON LibraryEntry.LibraryKey = Community.LibraryKey
     SQL
     ).to_a
@@ -303,7 +331,8 @@ class ImportScripts::HigherLogic < ImportScripts::Base
       # Attempt to find the category based on Community, if there was no Discussion in the first place
       original_discussion_key = p["DiscussionKey"].to_s.strip.presence
       original_community_key = p["CommunityKey"]
-      category_id = category_id_from_imported_category_id(original_discussion_key || original_community_key)
+      library_key = p["LibraryKey"]
+      category_id = category_id_from_imported_category_id(original_discussion_key || original_community_key || library_key)
 
       {
         id: p["DocumentKey"],
