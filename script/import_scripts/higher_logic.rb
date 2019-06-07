@@ -304,7 +304,7 @@ class ImportScripts::HigherLogic < ImportScripts::Base
         id: c['LibraryKey'],
         name: c['LibraryName'],
         description: c['LibraryDescription'],
-        read_restricted: true,
+        read_restricted: false,
       }
     end
   end
